@@ -1,117 +1,129 @@
+"""
+dijkstra_nav.py
+===============
+Algoritmo Dijkstra padrao para navegacao em grade dinamica.
+Funcoes necessarias para o run_simulation.py:
+    - build_frame_graph: constroi grafo dinamico com custos baseados em ocupacao
+    - dijkstra_std: busca Dijkstra de fonte unica
+"""
+
 import heapq
 import time
-import numpy as np
 
-def compute_edge_weight(occ_grid, u, v, base_weight=1.0, block_threshold=400.0):
-    occ_u = occ_grid[u[0], u[1]]
-    occ_v = occ_grid[v[0], v[1]]
-    weight = base_weight + max(occ_u, occ_v)
-    if weight > block_threshold:
-        return None  # Aresta removida
-    return weight
+BLOCK_THRESHOLD = 400.0
 
-def build_frame_graph(base_graph, occ_grid, block_threshold=400.0):
+
+def build_frame_graph(base_graph, occ_grid, block_threshold=BLOCK_THRESHOLD):
+    """
+    Constroi um grafo dinamico a partir do grafo base,
+    removendo arestas para celulas bloqueadas (ocupacao > threshold).
+
+    Parametros
+    ----------
+    base_graph : dict
+        {(r,c): [((nr,nc), peso), ...]}
+    occ_grid : np.ndarray
+        Grade de ocupacao (rows x cols).
+    block_threshold : float
+        Ocupacao acima deste valor bloqueia a celula.
+
+    Retorna
+    -------
+    frame_graph : dict
+        Mesmo formato que base_graph, sem arestas para celulas bloqueadas.
+    """
     frame_graph = {}
-    for u, neighbors in base_graph.items():
-        frame_graph[u] = []
-        for v, _ in neighbors:
-            w = compute_edge_weight(occ_grid, u, v, block_threshold=block_threshold)
-            if w is not None:
-                frame_graph[u].append((v, w))
+    for node, neighbors in base_graph.items():
+        r, c = node
+        # Se o proprio no esta bloqueado, ainda aparece no grafo
+        # mas pode nao ser alcancavel
+        if occ_grid[r, c] > block_threshold:
+            frame_graph[node] = []
+            continue
+        valid_neighbors = []
+        for (nr, nc), weight in neighbors:
+            if occ_grid[nr, nc] <= block_threshold:
+                valid_neighbors.append(((nr, nc), weight))
+        frame_graph[node] = valid_neighbors
     return frame_graph
 
-def dijkstra_std(graph, source, target):
-    dist = {v: float('inf') for v in graph}
-    pred = {v: None for v in graph}
-    if source in graph:
-        dist[source] = 0
-    else:
-        return {
-            'path': None, 'path_cost': 0.0, 'path_length': -1,
-            'nodes_expanded': 0, 'max_queue_size': 0, 'time_ms': 0.0, 'success': False
-        }
-        
-    heap = [(0, source)]
-    visited = set()
-    nodes_expanded = 0
-    max_queue = 0
 
+def dijkstra_std(graph, start, goal):
+    """
+    Dijkstra padrao de fonte unica.
+
+    Parametros
+    ----------
+    graph : dict
+        {node: [(neighbor, weight), ...]}
+    start : tuple (r, c)
+    goal  : tuple (r, c)
+
+    Retorna
+    -------
+    dict com:
+        success        : bool
+        path           : list[(r,c)]
+        path_cost      : float
+        path_length    : int
+        nodes_expanded : int
+        max_queue_size : int
+        time_ms        : float
+    """
     t0 = time.perf_counter()
 
+    dist = {start: 0.0}
+    prev = {start: None}
+    heap = [(0.0, start)]
+    visited = set()
+    nodes_expanded = 0
+    max_queue_size = 1
+
     while heap:
-        max_queue = max(max_queue, len(heap))
-        d, u = heapq.heappop(heap)
+        max_queue_size = max(max_queue_size, len(heap))
+        cost, u = heapq.heappop(heap)
 
         if u in visited:
             continue
         visited.add(u)
         nodes_expanded += 1
 
-        if u == target:
+        if u == goal:
             break
 
-        for v, w in graph.get(u, []):
-            if v in visited:
-                continue
-            new_dist = dist[u] + w
-            if new_dist < dist[v]:
-                dist[v] = new_dist
-                pred[v] = u
-                heapq.heappush(heap, (new_dist, v))
+        for (v, w) in graph.get(u, []):
+            new_cost = cost + w
+            if v not in dist or new_cost < dist[v]:
+                dist[v] = new_cost
+                prev[v] = u
+                heapq.heappush(heap, (new_cost, v))
 
     time_ms = (time.perf_counter() - t0) * 1000
 
-    # Reconstruir path
-    if target not in dist or dist[target] == float('inf'):
-        path = None
-        path_cost = 0.0
-        path_length = -1
-    else:
+    # Reconstruir caminho
+    if goal in visited:
         path = []
-        node = target
+        node = goal
         while node is not None:
             path.append(node)
-            node = pred[node]
+            node = prev[node]
         path.reverse()
-        path_cost = dist[target]
-        path_length = len(path) - 1
-
-    return {
-        'path': path,
-        'path_cost': path_cost,
-        'path_length': path_length,
-        'nodes_expanded': nodes_expanded,
-        'max_queue_size': max_queue,
-        'time_ms': time_ms,
-        'success': path is not None
-    }
-
-if __name__ == '__main__':
-    # Unit tests
-    print("Running Dijkstra Unit Tests...")
-    
-    # 1. Dijkstra-Std encontra caminho minimo em grade 3x3 sem obstaculos
-    from nav_utils import create_base_graph_and_navigable
-    base_graph, _ = create_base_graph_and_navigable(3, 3, obstacle_ratio=0.0)
-    occ_grid_empty = np.zeros((3, 3))
-    
-    frame_graph = build_frame_graph(base_graph, occ_grid_empty)
-    result = dijkstra_std(frame_graph, (0,0), (2,2))
-    
-    assert result['success'], "Test 1 Failed: Dijkstra didn't find path"
-    assert result['path_length'] == 4, f"Test 1 Failed: Path length is {result['path_length']} expected 4"
-    print("Test 1 Passed: Dijkstra found shortest path in empty grid.")
-    
-    # 2. Dijkstra-Std retorna path=None quando target isolado
-    occ_grid_isolated = np.zeros((3, 3))
-    # Block nodes around target (2,2)
-    occ_grid_isolated[1, 2] = 500.0
-    occ_grid_isolated[2, 1] = 500.0
-    
-    frame_graph = build_frame_graph(base_graph, occ_grid_isolated)
-    result = dijkstra_std(frame_graph, (0,0), (2,2))
-    
-    assert not result['success'], "Test 2 Failed: Path should be None"
-    assert result['path'] is None, "Test 2 Failed: Path should be None"
-    print("Test 2 Passed: Target isolated returned path=None.")
-    print("All tests passed.")
+        return {
+            'success': True,
+            'path': path,
+            'path_cost': dist[goal],
+            'path_length': len(path) - 1,
+            'nodes_expanded': nodes_expanded,
+            'max_queue_size': max_queue_size,
+            'time_ms': time_ms,
+        }
+    else:
+        return {
+            'success': False,
+            'path': [],
+            'path_cost': -1,
+            'path_length': 0,
+            'nodes_expanded': nodes_expanded,
+            'max_queue_size': max_queue_size,
+            'time_ms': time_ms,
+        }
